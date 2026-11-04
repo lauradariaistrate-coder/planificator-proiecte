@@ -627,11 +627,11 @@ function weekNav(ws){
 function viewSapt(){
   const ws=S.weekStart;const days=workDays(ws,5);
   const from=days[0],to=days[4];const isCur=from===weekRange()[0];
-  const rows=S.projects.filter(p=>S.logs.some(l=>!isL(l)&&l.projectId===p.id&&l.data>=from&&l.data<=to&&(+l.ore||0)>0)||(p.status!=="finalizat"&&p.status!=="oprit"&&(p.zile||[]).some(d=>d>=from&&d<=to))).sort(byUrg);
+  const rows=S.projects.filter(p=>S.logs.some(l=>!isL(l)&&l.projectId===p.id&&l.data>=from&&l.data<=to&&(+l.ore||0)>0)||(p.status!=="finalizat"&&p.status!=="oprit"&&((p.zile||[]).some(d=>d>=from&&d<=to)||(p.termen&&p.termen>=from&&p.termen<=to)||(from<=TODAY&&to>=TODAY&&["crit","urg"].includes(urg(p).lvl))))).sort(byUrg);
   const dayTot=days.map(d=>S.logs.filter(l=>!isL(l)&&l.data===d).reduce((a,l)=>a+(+l.ore||0),0));
   let html=weekNav(ws);
   html+=`<div class="legend2">
-    <div class="lg-i"><span class="sw"><span class="h">2</span></span><span>Ore lucrate în ziua aceea. Se trec din <em>Editează</em> („Ore lucrate azi”); un click pe celulă te duce direct acolo.</span></div>
+    <div class="lg-i"><span class="sw"><span class="h">2</span></span><span>Ore lucrate în ziua aceea. Se trec din <em>Editează</em> („Ore lucrate în ziua” — poți alege orice zi trecută); un click pe celulă te duce direct acolo.</span></div>
     <div class="lg-i"><span class="sw on"><span class="pl">de lucru</span></span><span>Zi în care ți-ai propus să lucrezi. Se stabilește din „Editează” la proiect.</span></div>
     <div class="lg-i"><span class="sw"><span class="fin">finalizat</span></span><span>Ziua în care proiectul a fost finalizat.</span></div>
     <div class="lg-i"><span class="sw"><span class="dl">termen predare</span></span><span>Ziua termenului de predare. După ea nu se mai pot planifica zile.</span></div>
@@ -1432,7 +1432,7 @@ function projectModal(p,focusShare,focusDay,focusTab){
     <label class="f">Stare lucrare${shared?" (pentru toată echipa)":""}<select id="pf-status"><option value="activ" ${pst==="activ"?"selected":""}>Activ</option><option value="asteptare" ${pst==="asteptare"?"selected":""}>În așteptare (avize, date)</option><option value="oprit" ${pst==="oprit"?"selected":""}>Oprit / suspendat</option><option value="finalizat" ${pst==="finalizat"?"selected":""}>Lucrare finalizată / predată</option></select></label>
     <label class="f" id="pf-fin-w" ${pst==="finalizat"?"":"hidden"}>Data finalizării (predării)<input id="pf-fin" type="date" max="${TODAY}" value="${p.finalizatLa||TODAY}"></label>
     <div class="fs" id="pf-hours">
-      <label class="f">Ore lucrate ${(focusDay||TODAY)===TODAY?"azi":"în"} · ${fmtLong(focusDay||TODAY)}<input type="number" id="hw-o" min="0" step="0.25" placeholder="0" style="max-width:160px"></label>
+      <div class="row" style="gap:8px;align-items:flex-end"><label class="f">Ore lucrate în ziua<input type="date" id="hw-d" max="${TODAY}" value="${focusDay||TODAY}" style="max-width:170px"></label><label class="f">Ore<input type="number" id="hw-o" min="0" step="0.25" placeholder="0" style="max-width:110px"></label><span class="hint" id="hw-dl">${fmtLong(focusDay||TODAY)}</span></div>
       <div id="hw-msg" class="hint"></div>
     </div>
     </div><div class="pf-col">
@@ -1462,7 +1462,7 @@ function projectModal(p,focusShare,focusDay,focusTab){
     mountPicker(r,sel);
     mountFaza(r,"pf-faza");
     /* orele lucrate: o singură zi (azi, sau ziua aleasă din tabel), cu limita de 8 h */
-    const hd=focusDay||TODAY,pend={};let overOk=false;
+    let hd=focusDay||TODAY;const pend={};let overOk=false;
     const cur=d=>p.id?dayHrs(p.id,d):0;
     const other=d=>S.logs.filter(l=>!isL(l)&&l.projectId!==p.id&&l.data===d).reduce((a,l)=>a+(+l.ore||0),0);
     const hi=r.querySelector("#hw-o");if(cur(hd))hi.value=cur(hd);
@@ -1471,6 +1471,8 @@ function projectModal(p,focusShare,focusDay,focusTab){
       const t=other(hd)+(+hi.value||0);
       r.querySelector("#hw-msg").innerHTML=t>MAX_ZI?`<span style="color:var(--crit);font-weight:600">Atenție: în ziua aceasta ai avea ${h(t)} h, peste limita de ${MAX_ZI} h.</span>${other(hd)?` Pe alte proiecte ai deja ${h(other(hd))} h.`:""}`:(other(hd)?`Pe alte proiecte ai deja ${h(other(hd))} h în ziua aceasta (maxim ${MAX_ZI} h/zi).`:`Maxim ${MAX_ZI} h/zi pe toate proiectele.`)};
     hi.addEventListener("input",()=>{pend[hd]=hi.value;msg()});msg();
+    /* zi aleasă liber (04.11.2026): poți completa orele uitate pe orice zi trecută */
+    r.querySelector("#hw-d").addEventListener("change",e=>{const v=e.target.value;if(!v||v>TODAY){e.target.value=hd;return}hd=v;hi.value=pend[hd]!=null?pend[hd]:(cur(hd)||"");r.querySelector("#hw-dl").textContent=fmtLong(hd);msg()});
     if(focusDay){r.querySelector("#pf-hours").scrollIntoView({block:"center"});hi.focus();hi.select()}
     r._hours={pend,cur,overs,get overOk(){return overOk},set overOk(v){overOk=v}};
     bindDeadline(r,"#pf-termen");
