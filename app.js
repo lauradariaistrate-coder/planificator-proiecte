@@ -476,6 +476,34 @@ $("saveProf").addEventListener("click", async () => {
   } catch { toast("Profilul s-a salvat doar în acest browser."); }
 });
 profileState();
+/* ---------- Administrare utilizatori (doar varianta GitHub, doar administrator) ---------- */
+const MST = { pending: ["în așteptare", "warn"], approved: ["aprobat", "ok"], blocked: ["blocat", "bad"] };
+async function loadUsers() {
+  if (!cap.user || !cap.user.isAdmin || !cap.user.isAdmin()) return;
+  $("usersStep").hidden = false;
+  let list = [];
+  try { list = await cap.user.listMembers(); } catch (e) { $("usersList").innerHTML = `<div class="note bad">${esc(e.message)}</div>`; return; }
+  const pend = list.filter(m => m.status === "pending").length;
+  $("pendingBanner").hidden = !pend;
+  $("pendingBanner").innerHTML = `<b>${pend} ${pend === 1 ? "cerere nouă" : "cereri noi"} de acces.</b> <button class="btn small" type="button" data-goto="profil">Vezi utilizatorii</button>`;
+  $("usersList").innerHTML = list.map(m => {
+    const st = MST[m.status] || ["?", "info"]; const self = cap.uid === m.user_id;
+    const btns = self ? `<span class="chip">tu · administrator</span>`
+      : m.status === "pending" ? `<button class="btn small dark" data-u="${esc(m.user_id)}" data-s="approved">Aprobă</button><button class="btn small danger" data-u="${esc(m.user_id)}" data-s="blocked">Respinge</button>`
+      : m.status === "approved" ? `<button class="btn small danger" data-u="${esc(m.user_id)}" data-s="blocked">Blochează</button>`
+      : `<button class="btn small" data-u="${esc(m.user_id)}" data-s="approved">Reactivează</button>`;
+    return `<div class="recip" style="cursor:default;align-items:center;flex-wrap:wrap"><div style="flex:1;min-width:0"><div class="who">${esc(m.nume || "(fără nume)")} <span class="chip ${st[1]}">${st[0]}</span></div><div class="addr">${esc(m.email || "")}</div><div class="hint mono" style="font-size:.75rem">înscris ${new Date(m.created_at).toLocaleDateString("ro-RO")}</div></div><div class="row" style="gap:6px">${btns}</div></div>`;
+  }).join("") || `<div class="empty">Niciun utilizator încă.</div>`;
+  $("usersList").querySelectorAll("[data-u]").forEach(b => b.addEventListener("click", async () => {
+    b.disabled = true;
+    try { await cap.user.setMemberStatus(b.dataset.u, b.dataset.s); toast(b.dataset.s === "approved" ? "Cont aprobat" : "Acces oprit"); }
+    catch (e) { toast(e.message || "Nu s-a putut schimba."); }
+    loadUsers();
+  }));
+}
+$("usersRefresh").addEventListener("click", loadUsers);
+$("copyAppLink").addEventListener("click", () => copy(location.origin + location.pathname, "Linkul aplicației a fost copiat"));
+
 $("pwSave").addEventListener("click", async () => {
   const a = $("pw1").value, b = $("pw2").value; $("pwErr").textContent = "";
   if (a.length < 10) { $("pwErr").textContent = "Parola trebuie să aibă minim 10 caractere."; return; }
@@ -637,6 +665,8 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => { 
   else $("analysis").innerHTML = `<div class="note warn">Analiza cu Claude nu e disponibilă în această vizualizare.</div>`;
   $("savePhoto").hidden = !downloads; $("exportBtn").hidden = !downloads;
   $("pwStep").hidden = !(user && user.changePassword);
+  loadUsers();
+  if (user && user.recovery && user.recovery()) { showView("profil"); setTimeout(() => { $("pwStep").scrollIntoView({ behavior: "smooth", block: "center" }); $("pw1").focus(); }, 300); toast("Alege parola nouă"); }
   fillProfile();
   updateButtons();
   if (db) {

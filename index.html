@@ -157,6 +157,7 @@ footer{color:var(--muted);font-size:.8rem;padding-block:var(--s3) var(--s5)}
 <main class="wrap">
   <!-- ============ CONSTATARE NOUĂ ============ -->
   <section class="view" id="view-nou">
+    <div class="note" id="pendingBanner" hidden></div>
     <div class="note warn" id="profBanner" hidden>Completează-ți o dată <b>profilul</b> (nume, prenume, e-mail). Fără el, sesizările nu se iau în considerare. <button class="btn small" type="button" data-goto="profil">Deschide Profilul</button></div>
     <div class="step">
       <h2><span class="n">01</span> Fotografia</h2>
@@ -276,6 +277,12 @@ footer{color:var(--muted);font-size:.8rem;padding-block:var(--s3) var(--s5)}
       </div>
       <p class="hint" id="profErr" style="color:var(--bad);margin:0"></p>
       <div class="row"><button class="btn primary" id="saveProf" type="button">Salvează profilul</button><span class="hint" id="profWhere"></span></div>
+    </div>
+    <div class="step" id="usersStep" hidden>
+      <h2>Utilizatori</h2>
+      <p class="hint" style="margin:0">Trimite linkul aplicației; persoana apasă „Creează cont nou”, își alege parola și confirmă e-mailul. Apoi apare aici și o aprobi. Până atunci nu poate analiza și nu poate salva nimic.</p>
+      <div id="usersList" style="display:flex;flex-direction:column;gap:var(--s1)"></div>
+      <div class="row"><button class="btn small" type="button" id="usersRefresh">Reîncarcă lista</button><button class="btn small" type="button" id="copyAppLink">Copiază linkul aplicației</button></div>
     </div>
     <div class="step" id="pwStep" hidden>
       <h2>Schimbă parola</h2>

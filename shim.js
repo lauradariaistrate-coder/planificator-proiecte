@@ -3,7 +3,8 @@
  * În Claude nu face nimic (window.claude există deja).
  *
  * Securitate:
- *  - login email + parolă (Supabase Auth); înscrierile publice sunt dezactivate din proiectul Supabase;
+ *  - login email + parolă (Supabase Auth); înscriere liberă, dar contul nou rămâne „în așteptare”
+ *    până îl aprobă un administrator (tabelul tl_members); fără aprobare nu poate analiza, salva sau urca poze;
  *  - toate cererile poartă tokenul utilizatorului; RLS lasă fiecare utilizator doar pe rândurile/pozele lui;
  *  - pozele stau într-un bucket privat, afișate prin linkuri semnate valabile 1 oră;
  *  - cheia Anthropic NU ajunge niciodată în browser: analiza trece prin funcția Supabase „analiza”.
@@ -55,40 +56,106 @@
   .tl-gate h2{margin:0;font-family:var(--f-display,sans-serif);text-transform:uppercase;letter-spacing:.03em}
   .tl-gate .err{color:var(--bad,#c0392b);font-size:.9rem;min-height:1.2em;margin:0}
   .tl-out{position:fixed;right:max(12px,env(safe-area-inset-right,0px));bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:6;font:500 .8rem var(--f-mono,monospace);background:var(--surface,#fff);color:var(--muted,#555);border:1px solid var(--line,#ddd);border-radius:999px;padding:6px 12px;cursor:pointer}`;
-  function gate() {
-    const st = document.createElement("style"); st.textContent = css; document.head.appendChild(st);
+  const APP_URL = () => location.origin + location.pathname;
+  function gate(msg) {
+    if (!document.getElementById("tl-css")) { const st = document.createElement("style"); st.id = "tl-css"; st.textContent = css; document.head.appendChild(st); }
+    const old = document.querySelector(".tl-gate"); if (old) old.remove();
     const needCfg = !CFG.supabaseUrl || !CFG.supabaseAnonKey;
-    const d = document.createElement("div"); d.className = "tl-gate";
-    d.innerHTML = `<form autocomplete="on">
-      <h2>Trotuar Liber</h2>
-      <p class="hint" style="margin:0">${needCfg ? "Prima pornire: adresa și cheia publică (anon/publishable) a proiectului Supabase. Se salvează doar în acest browser." : "Autentificare"}</p>
-      ${needCfg ? `<div><label class="lbl" for="tlU">URL proiect Supabase</label><input type="text" id="tlU" placeholder="https://xxxx.supabase.co" required></div>
-      <div><label class="lbl" for="tlK">Cheie publică (anon / publishable)</label><input type="text" id="tlK" required></div>` : ""}
-      <div><label class="lbl" for="tlE">E-mail</label><input type="email" id="tlE" autocomplete="username" required></div>
-      <div><label class="lbl" for="tlP">Parolă</label><input type="password" id="tlP" autocomplete="current-password" required></div>
-      <p class="err" id="tlErr"></p>
-      <button class="btn primary" type="submit">Intră</button>
-      ${!needCfg && !(window.TL_CONFIG && window.TL_CONFIG.supabaseUrl) ? `<button class="btn small" type="button" id="tlReset">Schimbă proiectul Supabase</button>` : ""}
-    </form>`;
-    document.body.appendChild(d);
-    const f = d.querySelector("form");
-    const rs = d.querySelector("#tlReset"); if (rs) rs.onclick = () => { ls.del(LS_CFG); location.reload(); };
-    f.addEventListener("submit", async e => {
-      e.preventDefault(); const err = d.querySelector("#tlErr"); err.textContent = "";
-      if (needCfg) {
-        const u = d.querySelector("#tlU").value.trim().replace(/\/+$/, ""), k = d.querySelector("#tlK").value.trim();
-        if (!/^https:\/\/[a-z0-9-]+\.supabase\.(co|in)$/i.test(u)) { err.textContent = "Adresa trebuie să fie de forma https://xxxx.supabase.co"; return; }
-        CFG.supabaseUrl = u; CFG.supabaseAnonKey = k; ls.set(LS_CFG, { supabaseUrl: u, supabaseAnonKey: k });
-      }
-      f.querySelector("button[type=submit]").disabled = true;
-      try { keep(await authPost("token?grant_type=password", { email: d.querySelector("#tlE").value.trim(), password: d.querySelector("#tlP").value })); d.remove(); start(); }
-      catch (x) { err.textContent = /invalid/i.test(x.message) ? "E-mail sau parolă greșită." : ("Nu mă pot conecta: " + x.message); f.querySelector("button[type=submit]").disabled = false; }
-    });
+    const d = document.createElement("div"); d.className = "tl-gate"; document.body.appendChild(d);
+    let mode = "login";
+    const cfgFields = needCfg ? `<div><label class="lbl" for="tlU">URL proiect Supabase</label><input type="text" id="tlU" placeholder="https://xxxx.supabase.co" required></div>
+      <div><label class="lbl" for="tlK">Cheie publică (anon / publishable)</label><input type="text" id="tlK" required></div>` : "";
+    const draw = (note) => {
+      const T = { login: "Autentificare", signup: "Cont nou", forgot: "Resetare parolă" }[mode];
+      d.innerHTML = `<form autocomplete="on" novalidate>
+        <h2>Trotuar Liber</h2>
+        <p class="hint" style="margin:0"><b>${T}</b>${needCfg ? " · prima pornire: adresa și cheia publică a proiectului Supabase" : ""}</p>
+        ${note ? `<p class="note" style="margin:0">${note}</p>` : ""}
+        ${cfgFields}
+        ${mode === "signup" ? `<div><label class="lbl" for="tlN">Nume și prenume</label><input type="text" id="tlN" autocomplete="name" required></div>` : ""}
+        <div><label class="lbl" for="tlE">E-mail</label><input type="email" id="tlE" autocomplete="username" required></div>
+        ${mode !== "forgot" ? `<div><label class="lbl" for="tlP">${mode === "signup" ? "Alege o parolă (minim 10 caractere)" : "Parolă"}</label><input type="password" id="tlP" autocomplete="${mode === "signup" ? "new-password" : "current-password"}" required></div>` : ""}
+        ${mode === "signup" ? `<div><label class="lbl" for="tlP2">Repetă parola</label><input type="password" id="tlP2" autocomplete="new-password" required></div>` : ""}
+        <p class="err" id="tlErr"></p>
+        <button class="btn primary" type="submit">${{ login: "Intră", signup: "Creează contul", forgot: "Trimite linkul de resetare" }[mode]}</button>
+        <div class="row" style="justify-content:space-between">
+          ${mode !== "login" ? `<button class="btn small" type="button" data-m="login">Am deja cont</button>` : `<button class="btn small" type="button" data-m="signup">Creează cont nou</button><button class="btn small" type="button" data-m="forgot">Ai uitat parola?</button>`}
+        </div>
+        ${!needCfg && !(window.TL_CONFIG && window.TL_CONFIG.supabaseUrl) ? `<button class="btn small" type="button" id="tlReset">Schimbă proiectul Supabase</button>` : ""}
+      </form>`;
+      d.querySelectorAll("[data-m]").forEach(x => x.onclick = () => { mode = x.dataset.m; draw(); });
+      const rs = d.querySelector("#tlReset"); if (rs) rs.onclick = () => { ls.del(LS_CFG); location.reload(); };
+      const f = d.querySelector("form"), err = d.querySelector("#tlErr"), val = id => (d.querySelector(id) || {}).value || "";
+      f.addEventListener("submit", async e => {
+        e.preventDefault(); err.textContent = "";
+        if (needCfg) {
+          const u = val("#tlU").trim().replace(/\/+$/, ""), k = val("#tlK").trim();
+          if (!/^https:\/\/[a-z0-9-]+\.supabase\.(co|in)$/i.test(u)) { err.textContent = "Adresa trebuie să fie de forma https://xxxx.supabase.co"; return; }
+          CFG.supabaseUrl = u; CFG.supabaseAnonKey = k; ls.set(LS_CFG, { supabaseUrl: u, supabaseAnonKey: k });
+        }
+        const email = val("#tlE").trim(), pw = val("#tlP");
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) { err.textContent = "Scrie o adresă de e-mail validă."; return; }
+        const btn = f.querySelector("button[type=submit]"); btn.disabled = true;
+        try {
+          if (mode === "login") { keep(await authPost("token?grant_type=password", { email, password: pw })); d.remove(); start(); return; }
+          if (mode === "signup") {
+            const nume = val("#tlN").trim();
+            if (nume.split(/\s+/).filter(Boolean).length < 2) throw new Error("§Scrie numele și prenumele.");
+            if (pw.length < 10) throw new Error("§Parola trebuie să aibă minim 10 caractere.");
+            if (pw !== val("#tlP2")) throw new Error("§Cele două parole nu coincid.");
+            const j = await authPost("signup?redirect_to=" + encodeURIComponent(APP_URL()), { email, password: pw, data: { full_name: nume } });
+            if (j.access_token) { keep(j); d.remove(); start(); return; }
+            mode = "login"; draw(`Contul a fost creat. <b>Deschide e-mailul de confirmare</b> trimis la ${esc(email)} și apasă linkul, apoi intră aici. După confirmare, contul așteaptă aprobarea administratorului.`); return;
+          }
+          if (mode === "forgot") {
+            await authPost("recover?redirect_to=" + encodeURIComponent(APP_URL()), { email });
+            mode = "login"; draw(`Dacă ${esc(email)} are cont, primești un e-mail cu linkul de resetare. Linkul te aduce înapoi aici, unde îți alegi parola nouă.`); return;
+          }
+        } catch (x) {
+          const m = String(x.message || "");
+          err.textContent = m.startsWith("§") ? m.slice(1)
+            : /invalid login|invalid_grant|invalid credentials/i.test(m) ? "E-mail sau parolă greșită."
+            : /not confirmed/i.test(m) ? "E-mailul nu e confirmat încă. Deschide linkul din e-mailul de confirmare."
+            : /already registered|already exists/i.test(m) ? "Există deja un cont cu acest e-mail. Folosește „Ai uitat parola?” dacă nu o mai știi."
+            : /signups? not allowed|disabled/i.test(m) ? "Înscrierile sunt închise. Cere administratorului să le deschidă."
+            : /rate limit|too many|security purposes/i.test(m) ? "Prea multe încercări. Așteaptă câteva minute."
+            : /weak|password should/i.test(m) ? "Parola e prea slabă. Folosește litere, cifre și simboluri."
+            : "Nu mă pot conecta: " + m;
+          btn.disabled = false;
+        }
+      });
+    };
+    draw(msg);
+  }
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  /* ---------- aprobare: tl_members (pending / approved / blocked) ---------- */
+  let member = { status: "approved", is_admin: false };
+  async function loadMember() {
+    try {
+      const r = await api(CFG.supabaseUrl + "/rest/v1/tl_members?select=status,is_admin&user_id=eq." + session.user.id);
+      if (r.status === 404) return; // schema veche, fără aprobare → acces ca până acum
+      if (!r.ok) return;
+      const rows = await r.json(); member = rows[0] || { status: "pending", is_admin: false };
+    } catch {}
+  }
+  function waitScreen() {
+    const d = document.createElement("div"); d.className = "tl-gate"; document.body.appendChild(d);
+    const blocked = member.status === "blocked";
+    d.innerHTML = `<form><h2>Trotuar Liber</h2>
+      <p class="note ${blocked ? "bad" : "warn"}" style="margin:0">${blocked ? "Accesul acestui cont a fost oprit de administrator." : `Contul <b>${esc(session.user.email)}</b> e creat și <b>așteaptă aprobarea</b> administratorului. Revino după ce primești confirmarea.`}</p>
+      ${blocked ? "" : `<button class="btn primary" type="button" id="tlAgain">Verifică din nou</button>`}
+      <button class="btn small" type="button" id="tlOut">Ieșire</button></form>`;
+    const a = d.querySelector("#tlAgain"); if (a) a.onclick = async () => { await loadMember(); if (member.status === "approved") { d.remove(); location.reload(); } else a.textContent = "Încă în așteptare – verifică din nou"; };
+    d.querySelector("#tlOut").onclick = logout;
   }
   async function refreshUser() { // profilul (nume, telefon, domiciliu) e în contul Supabase → același pe toate dispozitivele
     try { const r = await api(CFG.supabaseUrl + "/auth/v1/user"); if (r.ok) { const u = await r.json(); session.user.meta = u.user_metadata || {}; session.user.email = u.email || session.user.email; ls.set(LS_SES, session); } } catch {}
   }
-  function start() {
+  async function start() {
+    if (!document.getElementById("tl-css")) { const st = document.createElement("style"); st.id = "tl-css"; st.textContent = css; document.head.appendChild(st); }
+    await loadMember();
+    if (member.status !== "approved") { waitScreen(); return; }
     const b = document.createElement("button"); b.className = "tl-out"; b.type = "button";
     b.textContent = "Ieșire · " + (session.user.email || ""); b.onclick = logout; document.body.appendChild(b);
     refreshUser().finally(readyResolve);
@@ -202,7 +269,18 @@
       const r = await api(CFG.supabaseUrl + "/auth/v1/user", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }) });
       if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(/same|different/i.test(j.msg || j.message || "") ? "Parola nouă trebuie să fie diferită de cea veche." : /weak|short|characters/i.test(j.msg || j.message || "") ? "Parola e prea slabă. Folosește litere, cifre și simboluri." : "Parola nu a putut fi schimbată (" + r.status + ")."); }
     },
-    isOwner: () => true, canEdit: () => true, can: () => true, profiles: async () => ({})
+    isOwner: () => true, canEdit: () => true, can: () => true, profiles: async () => ({}),
+    recovery: () => !!window.__tlRecovery,
+    isAdmin: () => !!member.is_admin,
+    async listMembers() {
+      const r = await api(CFG.supabaseUrl + "/rest/v1/tl_members?select=user_id,email,nume,status,is_admin,created_at&order=created_at.desc");
+      if (!r.ok) throw new Error("Lista nu poate fi citită (" + r.status + ").");
+      return r.json();
+    },
+    async setMemberStatus(userId, status) {
+      const r = await api(CFG.supabaseUrl + "/rest/v1/rpc/tl_set_member_status", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ p_user: userId, p_status: status }) });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.message || ("Eroare " + r.status)); }
+    }
   };
   const downloads = {
     async save({ filename, data }) {
@@ -215,6 +293,25 @@
   const NS = { db, assets, sample, user, downloads };
   window.claude = { __shim: true, use: async name => { await ready; return NS[name] || null; } };
 
-  const boot = () => { if (session && CFG.supabaseUrl && CFG.supabaseAnonKey) fresh().then(start).catch(() => gate()); else gate(); };
+  async function fromEmailLink() { // linkurile din e-mail (confirmare cont / resetare parolă) aduc sesiunea în #fragment
+    const h = new URLSearchParams(location.hash.replace(/^#/, ""));
+    if (h.get("error_description")) { history.replaceState(null, "", APP_URL()); return { msg: "Linkul din e-mail nu mai e valid (" + esc(h.get("error_description")) + "). Cere unul nou." }; }
+    const at = h.get("access_token"); if (!at) return null;
+    history.replaceState(null, "", APP_URL());
+    try {
+      const r = await fetch(CFG.supabaseUrl + "/auth/v1/user", { headers: { apikey: CFG.supabaseAnonKey, Authorization: "Bearer " + at } });
+      if (!r.ok) throw 0;
+      const u = await r.json();
+      keep({ access_token: at, refresh_token: h.get("refresh_token"), expires_in: +h.get("expires_in") || 3600, user: u });
+      if (h.get("type") === "recovery") window.__tlRecovery = true;
+      return { ok: true };
+    } catch { return { msg: "Linkul din e-mail nu a putut fi folosit. Intră cu e-mailul și parola." }; }
+  }
+  const boot = async () => {
+    if (!CFG.supabaseUrl || !CFG.supabaseAnonKey) { gate(); return; }
+    const link = await fromEmailLink();
+    if (link && link.msg) { gate(link.msg); return; }
+    if (session) fresh().then(start).catch(() => gate()); else gate();
+  };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();
 })();
